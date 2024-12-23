@@ -3,7 +3,7 @@
 * Plugin Name: WooCommerce MercadoLibre Sync
 * Description: Sincroniza productos de WooCommerce con MercadoLibre
 * Version: 1.8.5
-* Author: CRISTIAN, JIMMY, FELIPE 
+* Author: CRISTIAN, JIMMY, FELIPE Y MARCO
 * Text Domain: woo-ml-sync
 * Domain Path: /languages
 */
@@ -497,40 +497,6 @@ class WooMercadoLibreSync {
         'attributes' => $attributes,
     );
 
-
-    // Add SIZE attribute
-    $sizes = array();
-    if ($product->is_type('variable')) {
-        $variations = $product->get_available_variations();
-        foreach ($variations as $variation) {
-            $variation_product = wc_get_product($variation['variation_id']);
-            $size = $variation_product->get_attribute('pa_size');
-            if (empty($size)) {
-                $size = $variation_product->get_attribute('size');
-            }
-            if (!empty($size) && !in_array($size, $sizes)) {
-                $sizes[] = $size;
-            }
-        }
-    } else {
-        $size = $product->get_attribute('pa_size');
-        if (empty($size)) {
-            $size = $product->get_attribute('size');
-        }
-        if (!empty($size)) {
-            $sizes[] = $size;
-        }
-    }
-
-    // Remove this block to avoid duplicate SIZE attribute
-    // if (!empty($sizes)) {
-    //     $data['attributes'][] = array(
-    //         'id' => 'SIZE',
-    //         'name' => 'Talla',
-    //         'value_name' => implode(', ', $sizes)
-    //     );
-    // }
-
     // Add GENDER attribute
     $gender = get_post_meta($product->get_id(), 'gender', true);
     $gender_map = [
@@ -633,6 +599,7 @@ class WooMercadoLibreSync {
    private function get_mercadolibre_attribute_id($woo_attribute_name) {
        $attribute_map = array(
            'pa_color' => 'COLOR',
+           'pa_pa_color' => 'COLOR',
            'pa_size' => 'SIZE',
            // Agrega más mapeos según sea necesario
        );
@@ -712,9 +679,7 @@ class WooMercadoLibreSync {
            return 'MLC1276'; // Categoría genérica como fallback
        }
        
-       $body = json_decode(wp_remote_retrieve_body($response), true);
-       
-       if (!empty($body) && isset($body[0]['category_id'])) {
+       $body = json_decode(wp_remote_retrieve_body($response), true);       if (!empty($body) && isset($body[0]['category_id'])) {
            return $body[0]['category_id'];
        }
        
@@ -988,55 +953,66 @@ class WooMercadoLibreSync {
    }
 
    public function ajax_get_synced_products() {
-       check_ajax_referer('get_synced_products_nonce', 'nonce');
+    check_ajax_referer('get_synced_products_nonce', 'nonce');
 
-       $page = isset($_POST['page']) ? intval($_POST['page']) : 1;
-       $status = isset($_POST['status']) ? sanitize_text_field($_POST['status']) : '';
-       $search = isset($_POST['search']) ? sanitize_text_field($_POST['search']) : '';
-       
-       $args = array(
-           'post_type' => 'product',
-           'posts_per_page' => 20,
-           'paged' => $page,
-           'post_status' => 'publish'
-       );
+    $page = isset($_POST['page']) ? intval($_POST['page']) : 1;
+    $status = isset($_POST['status']) ? sanitize_text_field($_POST['status']) : '';
+    $search = isset($_POST['search']) ? sanitize_text_field($_POST['search']) : '';
+    
+    $args = array(
+        'post_type' => 'product',
+        'posts_per_page' => -1,
+        'post_status' => array('publish', 'private'), // Incluir productos publicados y privados
+    );
 
-       if (!empty($search)) {
-           $args['s'] = $search;
-       }
+    if (!empty($search)) {
+        $args['s'] = $search;
+    }
 
-       if (!empty($status)) {
-           $args['meta_query'] = array(
-               array(
-                   'key' => '_mercadolibre_id',
-                   'compare' => $status === 'synced' ? 'EXISTS' : 'NOT EXISTS'
-               )
-           );
-       }
+    if (!empty($status)) {
+        $args['meta_query'] = array(
+            array(
+                'key' => '_mercadolibre_id',
+                'compare' => $status === 'synced' ? 'EXISTS' : 'NOT EXISTS'
+            )
+        );
+    }
 
-       $query = new WP_Query($args);
-       $products = array();
+    $query = new WP_Query($args);
+    $products = array();
 
-       foreach ($query->posts as $post) {
-           $product = wc_get_product($post);
-           $ml_id = get_post_meta($product->get_id(), '_mercadolibre_id', true);
-           
-           $products[] = array(
-               'id' => $product->get_id(),
-               'name' => $product->get_name(),
-               'sku' => $product->get_sku(),
-               'ml_status' => $ml_id ? 'synced' : 'not-synced',
-               'ml_id' => $ml_id,
-               'last_sync' => get_post_meta($product->get_id(), '_ml_last_sync', true),
-               'image' => wp_get_attachment_image_url($product->get_image_id(), 'thumbnail') ?: wc_placeholder_img_src('thumbnail')
-           );
-       }
+    foreach ($query->posts as $post) {
+        $product = wc_get_product($post);
+        $ml_id = get_post_meta($product->get_id(), '_mercadolibre_id', true);
+        
+        $products[] = array(
+            'id' => $product->get_id(),
+            'name' => $product->get_name(),
+            'sku' => $product->get_sku(),
+            'ml_status' => $ml_id ? 'synced' : 'not-synced',
+            'ml_id' => $ml_id,
+            'last_sync' => get_post_meta($product->get_id(), '_ml_last_sync', true),
+            'image' => wp_get_attachment_image_url($product->get_image_id(), 'thumbnail') ?: wc_placeholder_img_src('thumbnail'),
+            'visibility' => $product->get_catalog_visibility()
+        );
+    }
 
-       wp_send_json_success(array(
-           'products' => $products,
-           'total_pages' => $query->max_num_pages
-       ));
-   }
+    // Log the total number of products
+    $this->log_debug("Total de productos recuperados: " . count($products));
+
+    // Implement manual pagination
+    $items_per_page = 20;
+    $total_items = count($products);
+    $total_pages = ceil($total_items / $items_per_page);
+    $offset = ($page - 1) * $items_per_page;
+    $products_page = array_slice($products, $offset, $items_per_page);
+
+    wp_send_json_success(array(
+        'products' => $products_page,
+        'total_pages' => $total_pages,
+        'total_items' => $total_items
+    ));
+}
 
    public function ajax_sync_single_product() {
        check_ajax_referer('sync_single_product_nonce', 'nonce');
@@ -1049,16 +1025,27 @@ class WooMercadoLibreSync {
        }
 
        try {
-           $result = $this->sync_product_to_mercadolibre($product_id);
-           if ($result) {
-               update_post_meta($product_id, '_ml_last_sync', current_time('mysql'));
-               wp_send_json_success(__('Producto sincronizado exitosamente', 'woo-ml-sync'));
-           } else {
-               wp_send_json_error(__('Error al sincronizar el producto', 'woo-ml-sync'));
-           }
-       } catch (Exception $e) {
-           wp_send_json_error($e->getMessage());
-       }
+                $result = $this->sync_product_to_mercadolibre($product_id);
+                if ($result) {
+                    update_post_meta($product_id, '_ml_last_sync', current_time('mysql'));
+                    wp_send_json_success(__('Producto sincronizado exitosamente', 'woo-ml-sync'));
+                } else {
+                    $error_message = __('Error al sincronizar el producto. Verifique los registros para más detalles.', 'woo-ml-sync');
+                    $last_error = end($this->debug_messages);
+                    if ($last_error) {
+                        $error_message .= ' ' . $last_error;
+                    }
+                    wp_send_json_error($error_message);
+                }
+            } catch (Exception $e) {
+                $error_message = sprintf(
+                    'Error: %s in %s on line %d',
+                    $e->getMessage(),
+                    $e->getFile(),
+                    $e->getLine()
+                );
+                wp_send_json_error($error_message);
+            }
    }
 
    public function sync_stock_from_mercadolibre() {
