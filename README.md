@@ -55,13 +55,3 @@ Para soporte técnico, por favor contacta con nuestro equipo a través de:
 
 * Email:cristianmolinauc@gmail.com
 
-
-
-
-### Contribuir
-
-¡Las contribuciones son bienvenidas! Por favor, lee nuestra guía de contribución antes de enviar pull requests.
-
----
-
-*Nota: Este plugin no está afiliado oficialmente con MercadoLibre. MercadoLibre es una marca registrada de Mercado Libre, S.R.L.*
